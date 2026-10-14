@@ -418,3 +418,16 @@ svg { flex: none; }
 .toasts { top: 96px; bottom: auto; }
 .table th.col-main { width: 34%; }
 .toast span { white-space: pre-line; }
+
+.update-bar {
+  display: flex; align-items: center; gap: 12px; margin: 0 32px 4px; padding: 10px 12px 10px 16px;
+  border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line-strong); font-size: 13px;
+}
+.update-bar svg { width: 18px; height: 18px; color: var(--amber); }
+.update-bar span { flex: 1; color: var(--muted); }
+.update-bar b { color: var(--text); font-weight: 650; }
+.update-bar.required { background: var(--amber-soft); border-color: color-mix(in oklab, var(--amber) 35%, transparent); }
+.update-notes {
+  white-space: pre-line; max-height: 220px; overflow: auto; padding: 12px 14px; border-radius: var(--r);
+  background: var(--bg); border: 1px solid var(--line); color: var(--text); font-size: 13px; user-select: text;
+}

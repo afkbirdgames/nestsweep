@@ -7,7 +7,7 @@ from pathlib import Path
 
 import webview
 
-from . import common
+from . import common, updater
 from .api import Api
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
@@ -40,6 +40,7 @@ def main() -> None:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Nestsweep.App")
     except Exception:
         pass
+    updater.cleanup_old()
     api = Api()
     title = "Nestsweep" + (" (Administrator)" if common.is_admin() else "")
     window = webview.create_window(

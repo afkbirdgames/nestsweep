@@ -16,7 +16,7 @@ import time
 import traceback
 
 from . import __version__, common, custom_clean, driver_updater, performance_optimizer as po, software_updater, \
-    startup_manager, uninstaller
+    startup_manager, uninstaller, updater
 
 GITHUB_URL = "https://github.com/afkbirdgames/nestsweep"
 
@@ -36,6 +36,8 @@ class Api:
     def __init__(self):
         self._window = None
         self._lock = threading.Lock()
+        self._update: dict | None = None
+        self._update_lock = threading.Lock()
         self._cache: dict[str, dict] = {"un": {}, "lo": {}, "po": {}, "sm": {}, "su": {}, "du": {}}
         self._counts: dict[str, int | None] = {"startup_enabled": None, "updates": None, "asleep": None, "drivers": None}
 
@@ -61,6 +63,24 @@ class Api:
                 "data_dir": str(common.APP_DIR), "backup_dir": str(common.BACKUP_DIR),
                 "frozen": common.FROZEN, "github": GITHUB_URL}
 
+    # ------------------------------------------------------------- self-update
+
+    @_endpoint
+    def update_status(self, refresh: bool = False):
+        """Latest-release check, done once per launch unless refresh is asked for."""
+        with self._update_lock:
+            if refresh or self._update is None:
+                self._update = updater.check()
+        return {k: v for k, v in self._update.items() if k not in ("exe_url", "sum_url")}
+
+    @_endpoint
+    def update_install(self):
+        info = self._update or updater.check()
+        exe = updater.install(info, progress=lambda m: self._progress("update", m))
+        updater.relaunch(exe)
+        threading.Timer(0.5, lambda: self._window and self._window.destroy()).start()
+        return True
+
     @_endpoint
     def restart_as_admin(self):
         if common.relaunch_as_admin():
@@ -81,7 +101,8 @@ class Api:
 
     @_endpoint
     def open_url(self, url: str):
-        if url not in (GITHUB_URL, GITHUB_URL + "/releases", GITHUB_URL + "/issues"):
+        if url not in (GITHUB_URL, GITHUB_URL + "/releases", GITHUB_URL + "/issues") and \
+                not url.startswith(GITHUB_URL + "/releases/"):
             raise ValueError("unknown link")
         os.startfile(url)
         return True
@@ -298,6 +319,8 @@ class Api:
         u = d.update or {}
         return {"id": d.id, "name": d.name, "category": d.category, "manufacturer": d.manufacturer,
                 "version": d.driver_version, "date": d.driver_date, "problem": d.problem_code,
+                "problem_text": driver_updater.problem_text(d.problem_code),
+                "attention": bool(d.update) or driver_updater.needs_attention(d.problem_code),
                 "update": {"title": u.get("Title", ""), "date": (u.get("DriverVerDate") or "")[:10]} if d.update else None,
                 "backups": list(d.backups), "can_backup": d.inf_name.lower().startswith("oem")}
 
@@ -305,7 +328,7 @@ class Api:
     def du_scan(self):
         devs = driver_updater.scan(progress=lambda m: self._progress("drivers", m))
         self._cache["du"] = {d.id: d for d in devs}
-        self._counts["drivers"] = sum(1 for d in devs if d.update or d.problem_code)
+        self._counts["drivers"] = sum(1 for d in devs if d.update or driver_updater.needs_attention(d.problem_code))
         return [self._du_json(d) for d in devs]
 
     @_endpoint

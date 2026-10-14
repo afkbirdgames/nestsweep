@@ -41,6 +41,7 @@
     sm: { items: null, kind: "startup_app", q: "" },
     su: { items: null, picked: new Set(), patches: true, notes: [] },
     du: { items: null, picked: new Set(), only: true },
+    update: null,      // latest-release check result
   };
 
   // ------------------------------------------------------------------ api
@@ -63,7 +64,7 @@
     try {
       return await fn();
     } catch (e) {
-      if (quiet.includes(e.kind)) throw e;
+      if (quiet === true || quiet.includes(e.kind)) throw e;
       const admin = e.kind === "PermissionError" && !S.info.admin;
       toast("err", admin ? "Administrator rights needed" : "That didn't work", e.message, admin ? { label: "Restart as administrator", run: elevate } : null);
       throw e;
@@ -366,7 +367,7 @@
         <div class="panel hero">
           <div class="hero-top">
             <div>
-              <div class="big ${res && selectedBytes ? "amber" : ""}">${res ? n : "—"}<small>${res ? u : ""}</small></div>
+              <div class="big ${res && selectedBytes ? "amber" : ""}" style="${res ? "" : "color:var(--faint)"}">${n}<small>${u}</small></div>
               <div class="hero-label">${res ? `can be cleared from ${plural(cc.picked.size, "category", "categories")}` : S.busy.cleanup ? esc(S.busy.cleanup) + "…" : "Analyze to measure what can be cleared. Nothing is deleted until you choose Clean."}</div>
             </div>
             <div class="hero-side">
@@ -681,8 +682,8 @@
     const du = S.du;
     if (!du.items) return S.busy.drivers ? busyEmpty("drivers", "Scanning devices")
       : emptyState("Check your drivers", "Scan lists your devices and asks Windows Update for newer drivers. This can take a minute.", `<button class="btn primary" data-act="du-scan">${I.scan}Scan drivers</button>`);
-    const rank = (d) => d.update ? 0 : d.problem ? 1 : d.backups.length ? 2 : 3;
-    const rows = du.items.filter((d) => !du.only || d.update || d.problem || d.backups.length)
+    const rank = (d) => d.update ? 0 : d.attention ? 1 : d.backups.length ? 2 : d.problem ? 3 : 4;
+    const rows = du.items.filter((d) => !du.only || d.attention || d.backups.length)
       .sort((a, b) => rank(a) - rank(b) || a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
     const nUpd = du.items.filter((d) => d.update).length;
     const picked = du.items.filter((d) => du.picked.has(d.id));
@@ -700,7 +701,7 @@
               <td class="dim">${esc(d.category)}</td>
               <td class="dim wrap">${esc(d.version)}<div style="color:var(--faint);font-size:12px">${esc(d.date)}</div></td>
               <td>${d.update ? `<b style="color:var(--green);font-weight:650">${esc(d.update.date)}</b>` : '<span class="dim">—</span>'}</td>
-              <td class="fit">${d.update ? '<span class="chip amber">Update available</span>' : d.problem ? `<span class="chip red">Problem (code ${d.problem})</span>` : '<span class="chip green"><span class="dot"></span>Up to date</span>'}
+              <td class="fit">${d.update ? '<span class="chip amber">Update available</span>' : d.attention ? `<span class="chip red" title="Device Manager code ${d.problem}">${esc(d.problem_text)}</span>` : d.problem ? `<span class="chip" title="Device Manager code ${d.problem}">${esc(d.problem_text)}</span>` : '<span class="chip green"><span class="dot"></span>Up to date</span>'}
                 ${d.backups.length ? `<span class="chip" style="margin-left:4px">${I.archive.replace("<svg", '<svg style="width:12px;height:12px"')}Backed up</span>` : ""}</td></tr>`).join("")}
           </tbody></table>` : `<div class="empty" style="padding:44px">${bird({ cls: "bird", fill: "#4fd18b" })}<h3>Nothing needs attention</h3><p>Every driver is current and no device reports a problem. Turn off the filter to see all devices.</p></div>`}
       </div>
@@ -773,7 +774,7 @@
         <div class="set-row"><div class="txt"><b>Backups</b><span>${esc(i.backup_dir)}</span><span style="display:block">Registry exports and driver packages saved before changes.</span></div>
           <button class="btn sm" data-open="backups">${I.folder}Open</button></div>
       </div>
-      <div class="note plain">${I.info}<div>App updates come from winget and patches and drivers from Windows Update. Nestsweep doesn't send anything about your PC anywhere else.</div></div>
+      <div class="note plain">${I.info}<div>App updates come from winget, and patches and drivers from Windows Update. Nestsweep's own update check asks GitHub for the latest version number and sends nothing about your PC.</div></div>
     </div>`;
   }
 
@@ -796,7 +797,16 @@
       <div class="ver"><span>nestsweep ${esc(S.info.version)}</span><span>${S.info.admin ? "Administrator" : ""}</span></div>`;
   }
 
+  function renderUpdateBar() {
+    const u = S.update;
+    $("#updateBar").innerHTML = u && u.available ? `<div class="update-bar ${u.required ? "required" : ""}">
+        ${I.updates}<span><b>Nestsweep ${esc(u.latest)} is ${u.required ? "required" : "available"}.</b>
+        ${u.required ? "Tools are locked until you update." : ""}</span>
+        <button class="btn sm ${u.required ? "primary" : ""}" data-update ${S.busy.update ? "disabled" : ""}>${S.busy.update ? "Updating…" : "Update now"}</button></div>` : "";
+  }
+
   function rerender() {
+    renderUpdateBar();
     const p = PAGES[S.page];
     $("#title").textContent = p.title;
     $("#subtitle").textContent = p.sub;
@@ -845,12 +855,19 @@
     const el = (sel) => t.closest(sel);
     let x;
     if ((x = el("[data-elevate]"))) { e.preventDefault(); return elevate(); }
-    if ((x = el("[data-act]"))) { e.preventDefault(); try { await ACTIONS[x.dataset.act](); } catch (err) { /* reported */ } return; }
+    if ((x = el("[data-update]"))) { e.preventDefault(); return showUpdate(); }
+    if ((x = el("[data-act]"))) {
+      e.preventDefault();
+      if (updateBlocks(x.dataset.act)) return showUpdate();
+      try { await ACTIONS[x.dataset.act](); } catch (err) { /* reported */ }
+      return;
+    }
     if ((x = el("[data-go]"))) { e.preventDefault(); return go(x.dataset.go); }
     if ((x = el("[data-open]"))) { try { await call("open_path", x.dataset.open); } catch (err) { toast("err", "Couldn't open the folder", err.message); } return; }
     if ((x = el("[data-url]"))) { try { await call("open_url", x.dataset.url); } catch (err) { /* ignore */ } return; }
     if ((x = el("[data-kind]"))) { S.sm.kind = x.dataset.kind; return rerender(); }
     if ((x = el("[data-expand]"))) { e.stopPropagation(); S.po.open = S.po.open === x.dataset.expand ? null : x.dataset.expand; return rerender(); }
+    if (el("[data-del], [data-skip]") && updateBlocks("edit")) { e.stopPropagation(); return showUpdate(); }
     if ((x = el("[data-del]"))) { e.stopPropagation(); try { await smDelete(x.dataset.del); } catch (err) { /* reported */ } return; }
     if ((x = el("[data-skip]"))) {
       e.stopPropagation();
@@ -880,7 +897,10 @@
       rerender();
     }
     else if (t.dataset.all === "su") { S.su.picked = t.checked ? new Set(S.su.items.map((p) => p.id)) : new Set(); rerender(); }
-    else if (t.dataset.toggle) { await smToggle(t.dataset.toggle, t.checked); }
+    else if (t.dataset.toggle) {
+      if (updateBlocks("edit")) { t.checked = !t.checked; return showUpdate(); }
+      await smToggle(t.dataset.toggle, t.checked);
+    }
     else if (t.id === "suPatches") { S.su.patches = t.checked; }
     else if (t.id === "duOnly") { S.du.only = t.checked; rerender(); }
   });
@@ -896,7 +916,46 @@
   async function boot() {
     try { S.info = await call("app_info"); } catch (e) { /* keep defaults */ }
     go(location.hash.slice(1) || "overview");
+    checkForUpdate();
     await Promise.allSettled([refreshOverview(), loadRules().then(rerender)]);
+  }
+
+  // ------------------------------------------------------------------ updates
+  // A newer release blocks every feature except waking sleeping programs and restoring a driver
+  // backup (both undo earlier changes). The user can close the dialog, but it comes back the next
+  // time they try to use a feature. Releases marked "[optional]" are offered without blocking.
+  const ALWAYS_ALLOWED = new Set(["po-wake", "po-wake-all", "du-restore", "clear-sel", "cc-defaults", "cc-all", "cc-none"]);
+  const updateBlocks = (act) => !!(S.update && S.update.required) && !ALWAYS_ALLOWED.has(act);
+
+  async function checkForUpdate() {
+    try { S.update = await call("update_status"); } catch (e) { return; }
+    if (S.update && S.update.available) { rerender(); showUpdate(); }
+  }
+
+  let updateOpen = false;
+  async function showUpdate() {
+    const u = S.update;
+    if (!u || !u.available || updateOpen) return;
+    updateOpen = true;
+    const notes = u.notes ? `<div class="update-notes">${esc(u.notes)}</div>` : "";
+    const scrim = await modal({
+      title: `Nestsweep ${u.latest} is ready`,
+      body: `<p>You have version ${esc(u.current)}. ${u.required
+        ? "This update is required: Nestsweep's tools stay locked until it's installed, in case it fixes something that could harm your PC. Waking sleeping programs and restoring driver backups still work."
+        : "This update is optional."}</p>${notes}
+        <p style="font-size:12.5px">The download is checked against its published checksum before it replaces this copy. Nestsweep restarts when it's done.</p>`,
+      confirm: u.can_install ? "Update now" : "Open download page",
+      cancel: "Not now",
+    });
+    updateOpen = false;
+    if (!scrim) return;
+    if (!u.can_install) { try { await call("open_url", u.page); } catch (e) { /* ignore */ } return; }
+    try {
+      await work("update", "Updating Nestsweep", () => call("update_install"), true);
+      setStatus("Restarting with the new version…");
+    } catch (e) {
+      toast("err", "The update didn't install", e.message, { label: "Open download page", run: () => call("open_url", u.page) });
+    }
   }
   if (window.pywebview && window.pywebview.api) boot();
   else window.addEventListener("pywebviewready", boot, { once: true });

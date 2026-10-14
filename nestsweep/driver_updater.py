@@ -85,6 +85,28 @@ class Device:
     backups: list[str] = field(default_factory=list)   # backup file names, oldest first
 
 
+# Device Manager problem codes (CM_PROB_*) in plain words. Codes 22 and 45 are states the user
+# chose or expects (disabled, unplugged), so they aren't counted as problems.
+PROBLEMS = {
+    1: "Not set up correctly", 3: "Driver may be damaged", 10: "Can't start", 12: "Not enough free resources",
+    14: "Restart needed", 18: "Reinstall the driver", 19: "Settings in the registry are damaged",
+    21: "Being removed", 22: "Disabled", 24: "Not present", 28: "No driver installed",
+    29: "Disabled in firmware", 31: "Not working properly", 32: "Driver service is disabled",
+    37: "Driver failed to load", 39: "Driver missing or damaged", 43: "Windows stopped this device",
+    45: "Not connected", 47: "Prepared for safe removal", 48: "Driver blocked by Windows",
+    52: "Driver signature can't be verified",
+}
+NOT_A_PROBLEM = {22, 45, 47}
+
+
+def problem_text(code: int) -> str:
+    return PROBLEMS.get(code, f"Problem (code {code})") if code else ""
+
+
+def needs_attention(code: int) -> bool:
+    return bool(code) and code not in NOT_A_PROBLEM
+
+
 def scan_devices() -> list[Device]:
     rows = common.powershell_json(r"""
 $err = @{}; Get-CimInstance Win32_PnPEntity | ForEach-Object { $err[$_.PNPDeviceID] = $_.ConfigManagerErrorCode }

@@ -9,8 +9,16 @@ and drivers up to date.
 ## Download
 
 Get `Nestsweep.exe` from the [latest release](https://github.com/afkbirdgames/nestsweep/releases/latest)
-and run it. There's no installer and no account, and nothing about your PC is sent anywhere.
-Each release lists the exe's SHA-256 so you can check your download.
+and run it. There's no installer and no account. Each release lists the exe's SHA-256 so you
+can check your download.
+
+Nestsweep keeps itself up to date. At startup it asks GitHub for the latest release; that request
+is the only thing it sends, and it contains nothing about your PC. When a newer version exists,
+the tools stay locked until you install it, in case it fixes something that could cause harm.
+Waking sleeping programs and restoring driver backups always keep working. The update is checked
+against its published SHA-256 and, once releases are code-signed, against the publisher's
+signature before it replaces the running copy. Maintainers can put `[optional]` in a release's
+notes to offer an update without locking anything.
 
 Needs Windows 10 (1809 or later) or Windows 11 with the Microsoft Edge WebView2 Runtime, which
 Windows 11 and current Windows 10 already include.
@@ -35,6 +43,8 @@ installed for all users.
 
 Nestsweep is built to leave something behind rather than delete the wrong thing.
 
+- **Updates are verified.** Only `github.com` release downloads are accepted, the file must match
+  the release's SHA-256, and a signed copy only accepts an update signed by the same publisher.
 - **Everything is recorded.** Changes go into a journal at `%LOCALAPPDATA%\Nestsweep\state.db`.
   Registry keys are exported to `%LOCALAPPDATA%\Nestsweep\backups` before they're deleted, and a
   key that can't be exported is left alone.
