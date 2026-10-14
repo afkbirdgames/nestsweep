@@ -85,8 +85,9 @@ Add `--debug` to open the WebView developer tools. The UI is plain HTML, CSS and
 ./build.ps1        # creates .venv-build, installs the pinned dependencies, runs PyInstaller -> dist\Nestsweep.exe
 ```
 
-Pushing a tag like `v1.0.0` runs `.github/workflows/build.yml`, which runs the tests, builds
-`Nestsweep.exe` on a Windows runner and attaches it with its checksum to a GitHub release.
+Every push runs `.github/workflows/build.yml` on a Windows runner: tests, then a build. Publishing
+a GitHub release (for example tag `v1.0.0`) does the same and attaches `Nestsweep.exe` and its
+SHA-256 checksum to that release.
 
 ## Tests
 

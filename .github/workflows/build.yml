@@ -3,9 +3,10 @@ name: Build Nestsweep.exe
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+  release:
+    types: [published]       # publishing a release on GitHub builds the exe and attaches it
 
 permissions:
   contents: read
@@ -45,7 +46,7 @@ jobs:
           path: dist/Nestsweep.exe*
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -57,6 +58,7 @@ jobs:
           path: dist
       - uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
+          tag_name: ${{ github.event.release.tag_name }}
           files: |
             dist/Nestsweep.exe
             dist/Nestsweep.exe.sha256
