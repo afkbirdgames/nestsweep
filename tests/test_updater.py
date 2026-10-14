@@ -83,7 +83,11 @@ class LiveReleaseTest(unittest.TestCase):
 
     def test_download_verify_swap(self):
         import json
-        rel = json.loads(updater._get(updater.LATEST_API, 30, 1_000_000))
+        import urllib.error
+        try:
+            rel = json.loads(updater._get(updater.LATEST_API, 30, 1_000_000))
+        except urllib.error.URLError as e:          # includes HTTPError, e.g. GitHub's API rate limit
+            self.skipTest(f"GitHub API unavailable from this runner: {e}")
         info = updater.release_info(rel, "0.0.1")
         if not info["exe_url"]:
             self.skipTest("the latest release's exe is still being built and attached")
