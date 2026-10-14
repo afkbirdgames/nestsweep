@@ -131,7 +131,7 @@ def _services() -> list[StartupItem]:
         if v.get("Type") not in (0x10, 0x20, 0x50, 0x60) or "ImagePath" not in v:
             continue
         start = v.get("Start")
-        if start not in (2, 3, 4) or safety.is_critical_service(svc, v):
+        if start not in (2, 3, 4) or safety.is_critical_service(svc, v) or safety.is_sensitive_service(svc, v):
             continue
         exe = common.exe_from_command(str(v["ImagePath"]))
         company = common.file_company(exe) if os.path.isfile(exe) else ""

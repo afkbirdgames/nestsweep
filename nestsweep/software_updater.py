@@ -66,7 +66,7 @@ def _parse_winget_table(text: str) -> list[dict]:
 def scan_apps() -> list[Product]:
     if not winget_available():
         raise FileNotFoundError("winget (App Installer) is not installed")
-    cp = common.run([winget_path(), "upgrade", "--include-unknown", "--accept-source-agreements",
+    cp = common.run([winget_path(), "upgrade", "--accept-source-agreements",
                      "--disable-interactivity"], timeout=300)
     skipped = common.setting_get("su_skipped", {})
     ignored = set(common.setting_get("su_ignored", []))

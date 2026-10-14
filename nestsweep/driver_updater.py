@@ -98,6 +98,17 @@ PROBLEMS = {
 }
 NOT_A_PROBLEM = {22, 45, 47}
 
+# Device classes whose drivers are never updated from here: a bad driver for these can stop
+# Windows from booting (storage, chipset, firmware/BIOS) or leave the PC without a keyboard,
+# mouse or network to fix it. Windows Update and the PC maker's tools handle them.
+NEVER_UPDATE = {"firmware", "scsiadapter", "hdc", "system", "net", "processor", "diskdrive", "volume",
+                "computer", "usb", "keyboard", "mouse", "hidclass", "battery", "securitydevices",
+                "softwarecomponent", "extension"}
+
+
+def offerable(category: str) -> bool:
+    return (category or "").lower() not in NEVER_UPDATE
+
 
 def problem_text(code: int) -> str:
     return PROBLEMS.get(code, f"Problem (code {code})") if code else ""
@@ -170,7 +181,7 @@ def scan(progress=None) -> list[Device]:
         hw = u.get("DriverHardwareID") or ""
         date = u.get("DriverVerDate") or ""
         for d in devs:
-            if hw and _hw_match(hw, d.hardware_ids) and _is_newer(date, d.driver_date):
+            if hw and _hw_match(hw, d.hardware_ids) and _is_newer(date, d.driver_date) and offerable(d.category):
                 if not d.update or date > (d.update.get("DriverVerDate") or ""):
                     d.update = u
     try:
@@ -289,7 +300,8 @@ def update(devices: list[Device], restore_point: bool = True, progress=None) -> 
     """Install newer drivers. Returns {"results": [...], "skipped": ["Device: reason", ...]}."""
     if not common.is_admin():
         raise PermissionError("Updating drivers requires administrator rights.")
-    devices = [d for d in devices if d.update and _is_newer(d.update.get("DriverVerDate") or "", d.driver_date)]
+    devices = [d for d in devices if d.update and offerable(d.category)
+               and _is_newer(d.update.get("DriverVerDate") or "", d.driver_date)]
     if not devices:
         return {"results": [], "skipped": []}
     if restore_point:

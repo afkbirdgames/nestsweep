@@ -195,7 +195,12 @@ class Api:
                 kept.append(f"{sw.name} is still installed (the uninstaller was cancelled or didn't finish)")
                 continue
             self._progress("uninstaller", f"Looking for anything {sw.name} left behind", (n + 0.5) / len(ids))
-            for k, lo in enumerate(uninstaller.find_leftovers(sw, everything)):
+            try:
+                found = uninstaller.find_leftovers(sw, everything)
+            except Exception as e:
+                kept.append(f"{sw.name} was uninstalled, but leftovers couldn't be checked: {e}")
+                continue
+            for k, lo in enumerate(found):
                 lid = f"{n}:{k}"
                 self._cache["lo"][lid] = lo
                 leftovers.append({"id": lid, "program": sw.name, "kind": lo.kind, "target": lo.target,
@@ -266,12 +271,6 @@ class Api:
         item = self._cache["sm"][item_id]
         startup_manager.set_enabled(item, on)
         item.enabled = on
-        return True
-
-    @_endpoint
-    def sm_delete(self, item_id: str):
-        startup_manager.delete(self._cache["sm"][item_id])
-        self._cache["sm"].pop(item_id, None)
         return True
 
     # ------------------------------------------------------------- software updates

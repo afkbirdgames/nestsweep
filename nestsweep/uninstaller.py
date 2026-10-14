@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 import time
 import winreg
@@ -69,7 +68,7 @@ def scan(include_store_apps: bool = True) -> list[Software]:
             out[sid] = Software(
                 sid, str(name), str(v.get("DisplayVersion", "")), str(v.get("Publisher", "")),
                 str(v.get("InstallLocation", "")).strip('"'), _fmt_date(v.get("InstallDate")),
-                int(v.get("EstimatedSize", 0) or 0) * 1024,
+                _size_kb(v.get("EstimatedSize")) * 1024,
                 str(v.get("UninstallString", "")), str(v.get("QuietUninstallString", "")),
                 False, f"{common.HIVE_NAMES[hive]}\\{path}", view,
             )
@@ -77,6 +76,13 @@ def scan(include_store_apps: bool = True) -> list[Software]:
     if include_store_apps:
         items += _store_apps()
     return sorted(items, key=lambda s: s.name.lower())
+
+
+def _size_kb(v) -> int:
+    try:
+        return max(0, int(v or 0))
+    except (TypeError, ValueError):
+        return 0           # some installers write text or binary here
 
 
 def _fmt_date(d) -> str:
@@ -170,6 +176,12 @@ def find_leftovers(sw: Software, others: list[Software] = ()) -> list[Leftover]:
     out: list[Leftover] = []
     tokens = _tokens(sw)
     other_locs = [o.install_location for o in others if o.install_location and o.id != sw.id]
+    # Many programs register no InstallLocation; their uninstaller's folder tells us where they live.
+    for o in others:
+        if o.id != sw.id and o.uninstall_string:
+            exe_dir = os.path.dirname(common.exe_from_command(o.uninstall_string))
+            if exe_dir and not safety.is_protected_dir(exe_dir) and not safety.is_inside_windows(exe_dir):
+                other_locs.append(exe_dir)
     other_names = set()
     for o in others:
         if o.id != sw.id:
@@ -198,18 +210,29 @@ def find_leftovers(sw: Software, others: list[Software] = ()) -> list[Leftover]:
     # 2. folders: the install folder + AppData/ProgramData/Program Files folders named after the product
     cands: dict[str, bool] = {}
     if loc:
-        cands[sw.install_location.strip().strip('"').rstrip("\\")] = True
+        # Only pre-ticked when it's a normal program folder; anywhere else (D:\\Games, Documents\\Tools)
+        # the folder may hold other things, so the user decides.
+        cands[sw.install_location.strip().strip('"').rstrip("\\")] = \
+            safety.under_program_files(loc) and not safety.in_personal_folder(loc)
     for base in (os.environ.get("APPDATA"), os.environ.get("LOCALAPPDATA"), os.environ.get("PROGRAMDATA"),
                  os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)")):
         if not base or not os.path.isdir(base):
             continue
-        for d in os.listdir(base):
+        try:
+            names = os.listdir(base)
+        except OSError:
+            continue
+        for d in names:
             if _matches(d, tokens["name"]):
                 cands.setdefault(os.path.join(base, d), False)
             elif d.lower() in tokens["publisher"]:
                 pub = os.path.join(base, d)
                 if os.path.isdir(pub) and not safety.is_reparse(pub):
-                    for x in os.listdir(pub):
+                    try:
+                        inner = os.listdir(pub)
+                    except OSError:
+                        inner = []
+                    for x in inner:
                         if _matches(x, tokens["name"]):
                             cands.setdefault(os.path.join(pub, x), False)
     seen = set()
@@ -305,12 +328,12 @@ def remove_leftovers(leftovers: list[Leftover], progress=None) -> dict:
                 root, sub = common.split_key(lo.target)
                 common.reg_delete_tree(root, sub, view)
             elif lo.kind == "shortcut":
-                os.remove(lo.target)
+                safety.recycle(lo.target)
             elif lo.kind == "folder":
                 if (safety.is_reparse(lo.target) or safety.is_protected_dir(lo.target)
                         or safety.is_inside_windows(lo.target)):
                     raise PermissionError("protected folder")
-                shutil.rmtree(lo.target, ignore_errors=False)   # rmtree removes junctions without following them
+                safety.recycle(lo.target)        # Recycle Bin, so it can be restored from the desktop
             stats["removed"] += 1
         except Exception as e:
             stats["errors"].append(f"{lo.kind} {lo.target}: {e}")

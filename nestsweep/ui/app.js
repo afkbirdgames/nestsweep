@@ -108,7 +108,7 @@
     setTimeout(() => el.remove(), action ? 9000 : 5200);
   }
 
-  function modal({ title, body, confirm = "Continue", cancel = "Cancel", danger = false, wide = false, left = "" }) {
+  function modal({ title, body, confirm = "Continue", cancel = "Cancel", danger = false, wide = false, left = "", focusCancel = false }) {
     return new Promise((resolve) => {
       const scrim = document.createElement("div");
       scrim.className = "scrim";
@@ -123,7 +123,7 @@
       scrim.addEventListener("click", (e) => { if (e.target === scrim) close(false); const b = e.target.closest("[data-r]"); if (b) close(b.dataset.r === "1"); });
       document.addEventListener("keydown", key);
       document.body.appendChild(scrim);
-      $('[data-r="1"]', scrim).focus();
+      $(focusCancel && cancel ? '[data-r="0"]' : '[data-r="1"]', scrim).focus();
     });
   }
   const listHtml = (items) => `<ul>${items.slice(0, 12).map((x) => `<li>${esc(x)}</li>`).join("")}${items.length > 12 ? `<li>and ${items.length - 12} more</li>` : ""}</ul>`;
@@ -516,7 +516,7 @@
     const po = S.po;
     if (!po.items) return S.busy.performance ? busyEmpty("performance", "Finding programs that run in the background")
       : emptyState("Let idle programs sleep", "Scan to find programs that run services, scheduled tasks or startup entries even when you're not using them.", `<button class="btn primary" data-act="po-scan">${I.scan}Scan programs</button>`);
-    const impact = { high: "red", medium: "amber", low: "" };
+    const impact = { high: "amber", medium: "", low: "" };
     const stateChip = (s) => s === "deactivated" ? `<span class="chip blue">${I.moon.replace("<svg", '<svg style="width:12px;height:12px"')}Asleep</span>`
       : s === "ignored" ? '<span class="chip">Ignored</span>' : '<span class="chip green"><span class="dot"></span>Awake</span>';
     const order = { deactivated: 0, found: 1, ignored: 2 }, rank = { high: 0, medium: 1, low: 2 };
@@ -597,14 +597,14 @@
       ${errors.length ? `<div class="note plain" style="margin-top:10px">${I.info}<div>Some entries couldn't be read: ${esc(errors.map((e) => e.name).join("; "))}</div></div>` : ""}
       <div class="panel" style="margin-top:14px">
         <table class="table" data-table="sm">
-          <thead><tr><th class="nosort fit">On</th><th class="nosort" style="width:26%">Name</th><th class="nosort" style="width:20%">Publisher</th><th class="nosort">Command</th><th class="nosort fit"></th></tr></thead>
+          <thead><tr><th class="nosort fit">On</th><th class="nosort" style="width:26%">Name</th><th class="nosort" style="width:20%">Publisher</th><th class="nosort">Command</th></tr></thead>
           <tbody>${rows.map((i) => `
             <tr data-id="${esc(i.id)}" style="${i.enabled ? "" : "opacity:.62"}">
               <td class="fit"><label class="switch" title="${i.enabled ? "Turn off" : "Turn on"}"><input type="checkbox" data-toggle="${esc(i.id)}" ${i.enabled ? "checked" : ""} ${i.can_toggle && !S.busy.startup ? "" : "disabled"}><span></span></label></td>
               <td><span class="strong">${esc(i.name)}</span><div class="dim" style="font-size:12px">${esc(i.location)}</div></td>
               <td class="dim">${esc(i.publisher)}</td>
               <td class="dim" title="${esc(i.command)}">${esc(i.command)}</td>
-              <td class="right fit">${i.type === "startup_app" ? `<button class="btn icon ghost" data-del="${esc(i.id)}" title="Delete entry" aria-label="Delete ${esc(i.name)}">${I.trash}</button>` : ""}</td></tr>`).join("")}
+</tr>`).join("")}
           </tbody></table>
         ${rows.length ? "" : `<div class="empty" style="padding:40px"><p>${q ? `Nothing matches “${esc(sm.q)}”.` : "Nothing here."}</p></div>`}
       </div>`;
@@ -622,13 +622,7 @@
       setStatus(`${it.name} turned ${on ? "on" : "off"}.`);
     } catch (e) { /* toast already shown; rerender restores the switch */ }
   }
-  async function smDelete(id) {
-    const it = S.sm.items.find((i) => i.id === id);
-    if (!(await modal({ title: `Delete ${it.name}?`, body: `<p>The startup entry is removed (the program itself stays installed). A backup of the entry is kept.</p><p style="word-break:break-all"><code>${esc(it.command)}</code></p>`, confirm: "Delete", danger: true }))) return;
-    await work("startup", "Deleting", () => call("sm_delete", id));
-    S.sm.items = S.sm.items.filter((i) => i.id !== id);
-    toast("ok", "Deleted", `${it.name} no longer starts with Windows.`);
-  }
+
 
   // ---------------------------------------------------------------- updates
   const SU_STATUS = { successfully_updated: ["green", "Updated"], need_reboot_to_finish: ["amber", "Restart to finish"], failed: ["red", "Failed"], succeeded_with_errors: ["amber", "Updated with errors"], aborted: ["red", "Cancelled"] };
@@ -712,7 +706,7 @@
   }
   async function duScan() {
     S.du.items = await work("drivers", "Scanning devices", () => call("du_scan"));
-    S.du.picked = new Set(S.du.items.filter((d) => d.update).map((d) => d.id));
+    S.du.picked = new Set();      // nothing pre-selected: driver updates are always a deliberate choice
     refreshOverview();
   }
   async function duUpdate() {
@@ -731,9 +725,12 @@
       if (e.kind !== "RestorePointError") return;
       const go = await modal({
         title: "No restore point was created", danger: true, confirm: "Update without a restore point", cancel: "Don't update",
-        body: `<p>${esc(e.message)}</p><p>Nothing has been changed. You can still update: drivers are backed up first either way, but without a restore point you can't roll the whole system back.</p>`,
+        focusCancel: true,
+        body: `<p>${esc(e.message)}</p><p>Nothing has been changed. You can still update: drivers are backed up first either way, but without a restore point you can't roll the whole system back if Windows has trouble starting.</p>
+          <label class="toggle-label" style="color:var(--text)"><input type="checkbox" class="check" id="noRpAck">I understand and want to update anyway</label>`,
       });
       if (!go) return;
+      if (!$("#noRpAck", go).checked) { toast("err", "Nothing was updated", "Tick \"I understand\" to update without a restore point."); return; }
       res = await work("drivers", "Updating drivers", () => call("du_update", ids, false));
     }
     if (!res) return;
@@ -867,8 +864,7 @@
     if ((x = el("[data-url]"))) { try { await call("open_url", x.dataset.url); } catch (err) { /* ignore */ } return; }
     if ((x = el("[data-kind]"))) { S.sm.kind = x.dataset.kind; return rerender(); }
     if ((x = el("[data-expand]"))) { e.stopPropagation(); S.po.open = S.po.open === x.dataset.expand ? null : x.dataset.expand; return rerender(); }
-    if (el("[data-del], [data-skip]") && updateBlocks("edit")) { e.stopPropagation(); return showUpdate(); }
-    if ((x = el("[data-del]"))) { e.stopPropagation(); try { await smDelete(x.dataset.del); } catch (err) { /* reported */ } return; }
+    if (el("[data-skip]") && updateBlocks("edit")) { e.stopPropagation(); return showUpdate(); }
     if ((x = el("[data-skip]"))) {
       e.stopPropagation();
       const id = x.dataset.skip;
@@ -898,7 +894,7 @@
     }
     else if (t.dataset.all === "su") { S.su.picked = t.checked ? new Set(S.su.items.map((p) => p.id)) : new Set(); rerender(); }
     else if (t.dataset.toggle) {
-      if (updateBlocks("edit")) { t.checked = !t.checked; return showUpdate(); }
+      if (!t.checked && updateBlocks("edit")) { t.checked = true; return showUpdate(); }
       await smToggle(t.dataset.toggle, t.checked);
     }
     else if (t.id === "suPatches") { S.su.patches = t.checked; }
@@ -924,7 +920,10 @@
   // A newer release blocks every feature except waking sleeping programs and restoring a driver
   // backup (both undo earlier changes). The user can close the dialog, but it comes back the next
   // time they try to use a feature. Releases marked "[optional]" are offered without blocking.
-  const ALWAYS_ALLOWED = new Set(["po-wake", "po-wake-all", "du-restore", "clear-sel", "cc-defaults", "cc-all", "cc-none"]);
+  // Scans that lead to an undo (finding a sleeping program, a startup item, a driver backup) stay
+  // available too, and so does switching a startup item back on.
+  const ALWAYS_ALLOWED = new Set(["po-wake", "po-wake-all", "po-scan", "du-restore", "du-scan", "sm-scan",
+    "clear-sel", "cc-defaults", "cc-all", "cc-none"]);
   const updateBlocks = (act) => !!(S.update && S.update.required) && !ALWAYS_ALLOWED.has(act);
 
   async function checkForUpdate() {
@@ -954,7 +953,12 @@
       await work("update", "Updating Nestsweep", () => call("update_install"), true);
       setStatus("Restarting with the new version…");
     } catch (e) {
-      toast("err", "The update didn't install", e.message, { label: "Open download page", run: () => call("open_url", u.page) });
+      // Never leave someone locked out of an app that can't update itself: after a failed attempt
+      // the tools unlock for this session, and the banner stays as a reminder.
+      S.update.required = false;
+      rerender();
+      toast("err", "The update didn't install", `${e.message} You can keep using this version for now.`,
+        { label: "Open download page", run: () => call("open_url", u.page) });
     }
   }
   if (window.pywebview && window.pywebview.api) boot();

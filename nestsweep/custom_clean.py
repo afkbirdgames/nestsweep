@@ -11,6 +11,7 @@ Rules live in rules.ini (a winapp2-style format):
   ExcludeKeyN=FILE|<path>   or   PATH|<folder>[|<mask>]
   ActionN=EmptyRecycleBin | CleanClipboard | CleanDNSCache | RemoveEmptyDirectories|<folder>
   ActiveProcesses=a.exe,b.exe   app must be closed first
+  MinAgeHours=48                skip files created or changed more recently
   [Rule Vars]  NAME=path,path    referenced as <NAME> inside paths
 
 Safety: folders are walked without following junctions or symlinks, a rule whose path uses
@@ -25,6 +26,7 @@ import fnmatch
 import glob
 import os
 import re
+import time
 import winreg
 from ctypes import wintypes
 from dataclasses import dataclass, field
@@ -50,6 +52,7 @@ class Rule:
     detect_os: str | None = None
     active_processes: list[str] = field(default_factory=list)
     warning: str | None = None
+    min_age_hours: float = 0     # skip files changed more recently (files still in use, unsaved work)
 
 
 @dataclass
@@ -173,6 +176,7 @@ def load_rules(path: Path | None = None) -> list[Rule]:
             tags=[t for t in items.get("Tags", "").split(",") if t],
             detect_os=items.get("DetectOS"),
             warning=items.get("Warning"),
+            min_age_hours=float(items.get("MinAgeHours", 0) or 0),
         )
         for k, v in sorted(items.items(), key=lambda kv: _keynum(kv[0])):
             base = re.sub(r"\d+$", "", k).lower()
@@ -243,6 +247,7 @@ def _broad(masks: list[str], flags: set[str]) -> bool:
 
 def _scan_file_key(r: Rule, folder: str, masks: list[str], flags: set[str], out: list[Finding]) -> None:
     recurse = bool(flags & {"RECURSE", "REMOVESELF"})
+    newest = time.time() - r.min_age_hours * 3600
     for base in _glob_dirs(folder):
         if safety.is_drive_root(base) or not _temp_base_ok(folder, base) or \
                 (_broad(masks, flags) and not safety.cleanup_base_ok(base)):
@@ -256,7 +261,10 @@ def _scan_file_key(r: Rule, folder: str, masks: list[str], flags: set[str], out:
                     if _excluded(p, r):
                         continue
                     try:
-                        out.append(Finding(r.id, "file", p, os.path.getsize(p), base))
+                        st = os.stat(p)
+                        if r.min_age_hours and max(st.st_mtime, st.st_ctime) > newest:
+                            continue
+                        out.append(Finding(r.id, "file", p, st.st_size, base))
                     except OSError:
                         pass
         if "REMOVESELF" in flags and not safety.is_protected_dir(base):

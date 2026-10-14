@@ -46,7 +46,8 @@ def _all_entries() -> list[Entry]:
     entries = []
     for svc in common.reg_subkeys(winreg.HKEY_LOCAL_MACHINE, SVC):
         v = {k: val for k, (val, _) in common.reg_values(winreg.HKEY_LOCAL_MACHINE, f"{SVC}\\{svc}").items()}
-        if v.get("Start") in (2, 3, 4) and "ImagePath" in v and not safety.is_critical_service(svc, v):
+        if v.get("Start") in (2, 3, 4) and "ImagePath" in v and not safety.is_critical_service(svc, v) \
+                and not safety.is_sensitive_service(svc, v):
             entries.append(Entry("service:" + svc, "service", svc, common.exe_from_command(str(v["ImagePath"])),
                                  {"start": v["Start"]}))
     for it in startup_manager._startup_apps():
@@ -77,6 +78,8 @@ def scan() -> list[Program]:
     all_locs = [s.install_location for s in installed if s.install_location]
     for sw in installed:
         if sw.publisher.lower().startswith("microsoft"):
+            continue
+        if sw.id not in sleeping and safety.is_sensitive_program(sw.name, sw.publisher, sw.install_location):
             continue
         loc = safety.safe_install_location(sw.install_location, all_locs)
         if not loc and sw.id not in sleeping:

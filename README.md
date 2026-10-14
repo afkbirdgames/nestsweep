@@ -15,7 +15,9 @@ can check your download.
 Nestsweep keeps itself up to date. At startup it asks GitHub for the latest release; that request
 is the only thing it sends, and it contains nothing about your PC. When a newer version exists,
 the tools stay locked until you install it, in case it fixes something that could cause harm.
-Waking sleeping programs and restoring driver backups always keep working. The update is checked
+Undo actions always keep working: waking sleeping programs, switching startup items back on, and
+restoring driver backups. If an update can't install (no write access, antivirus, no internet),
+the tools unlock for that session so nobody is stuck. The update is checked
 against its published SHA-256 and, once releases are code-signed, against the publisher's
 signature before it replaces the running copy. Maintainers can put `[optional]` in a release's
 notes to offer an update without locking anything.
@@ -35,7 +37,7 @@ installed for all users.
 | Cleanup | Clears temp files, caches, logs and privacy traces using the rules in `nestsweep/rules.ini`. Analyze first, then clean |
 | Uninstaller | Runs a program's own uninstaller, then lists leftover folders, registry keys, services, tasks and shortcuts for you to confirm |
 | Sleep mode | Turns off a program's services, scheduled tasks and startup entries and records how to turn them back on |
-| Startup | Switches startup apps, scheduled tasks, services and right-click menu entries on and off |
+| Startup | Switches startup apps, scheduled tasks, services and right-click menu entries on and off (nothing is deleted) |
 | App updates | Newer app versions through **winget**, plus missing patches from Windows Update |
 | Drivers | Newer drivers from Windows Update, with a restore point and a backup first |
 
@@ -54,18 +56,28 @@ Nestsweep is built to leave something behind rather than delete the wrong thing.
   - It won't empty drive roots, Windows, Program Files, user profiles, AppData roots or your
     personal folders.
   - It checks every path again right before deleting it.
+  - Temp files created or changed in the last 48 hours are left alone, and emptying the Recycle
+    Bin is off unless you tick it.
 - **Uninstaller**
   - It only looks for leftovers when the program really is gone. If you cancel the vendor
     uninstaller, nothing is swept.
   - It ignores install folders that are too broad or shared with another program, anything
     inside Windows, and Microsoft services and tasks.
-  - Only items that clearly belonged to the program come pre-ticked.
+  - Only items that clearly belonged to the program come pre-ticked. An install folder is only
+    pre-ticked when it's inside Program Files, never in Documents, Desktop or a folder like
+    `D:\Games`, and nothing inside anyone's personal folders is ever pre-ticked.
+  - Leftover folders and shortcuts go to the **Recycle Bin**, so they can be restored.
 - **Sleep mode and Startup** never touch Microsoft, svchost, Windows-folder or protected
-  (anti-malware) services, or tasks under `\Microsoft\`.
+  (anti-malware) services, or tasks under `\Microsoft\`. Security software (anything Windows
+  Security Center reports, plus antivirus, firewall, VPN and backup tools), audio and touchpad
+  helpers are never offered for sleep. Startup entries are switched off, never deleted.
 - **Drivers**
-  - Only drivers newer than the installed one are offered.
+  - Only drivers newer than the installed one are offered, and nothing is pre-selected.
+  - Drivers for storage controllers, chipset/system devices, firmware, network adapters, USB
+    controllers, keyboards and mice are never updated from here, because a bad one can stop
+    Windows from starting or leave the PC without input or internet.
   - A System Restore point is created and confirmed first. If Windows won't make one, nothing
-    is installed unless you choose to continue.
+    is installed unless you tick "I understand" and choose to continue.
   - Each third-party driver is backed up with `pnputil`. A device whose backup fails is
     skipped.
   - Backups are kept in an administrators-only folder (`%ProgramData%\Nestsweep\DriverBackups`)

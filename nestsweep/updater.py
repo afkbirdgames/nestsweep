@@ -161,6 +161,8 @@ def install(info: dict, progress=None) -> str:
     if progress:
         progress(f"Downloading Nestsweep {info['latest']}")
     data = _get(info["exe_url"], 300, MAX_EXE_BYTES)
+    if hashlib.sha256(data).hexdigest() != sha:          # check what was downloaded, before it touches disk
+        raise ValueError("the download doesn't match the published checksum, so it wasn't installed")
     # Write next to the running exe so the final swap is a same-folder rename.
     try:
         fd, tmp = tempfile.mkstemp(prefix=".nestsweep-update-", suffix=".exe", dir=current.parent)
@@ -185,5 +187,12 @@ def install(info: dict, progress=None) -> str:
 
 
 def relaunch(exe: str) -> None:
+    """Start the new copy with normal rights, even if this copy was running as administrator:
+    Explorer launches it as the signed-in user. The user can choose "Restart as administrator"
+    again if they need it."""
+    if common.is_admin():
+        subprocess.Popen([os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "explorer.exe"), exe],
+                         close_fds=True)
+        return
     flags = 0x00000008 | 0x00000200      # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     subprocess.Popen([exe], close_fds=True, creationflags=flags, cwd=os.path.dirname(exe))

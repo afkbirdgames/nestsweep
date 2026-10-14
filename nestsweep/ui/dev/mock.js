@@ -66,7 +66,6 @@
       items.push({ id: "w1", type: "windows_service", name: "Steam Client Service", publisher: "Valve Corporation", command: "SteamService.exe", enabled: false, location: "Manual", can_toggle: true });
       window.__counts.startup_enabled = 4; return ok(items); },
     sm_set_enabled: async () => { await wait(200); return admin ? ok(true) : ok(true); },
-    sm_delete: async () => ok(true),
     su_scan: async () => { await wait(700); window.__counts.updates = 4; return ok({ notes: [], items: [
       { id: "Discord.Discord", name: "Discord", current: "1.0.9163", available: "1.0.9171", source: "winget", category: "application", severity: "unknown", size: 0, status: "" },
       { id: "OBSProject.OBSStudio", name: "OBS Studio", current: "31.1.2", available: "32.0.1", source: "winget", category: "application", severity: "unknown", size: 0, status: "" },

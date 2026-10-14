@@ -148,12 +148,53 @@ def is_protected_dir(path: str) -> bool:
     for prot in protected_folders():
         if p == prot or prot.startswith(p + "\\"):
             return True
-    # other users' profile roots and their AppData roots
+    # Every profile on the PC, not just the current one (an admin elevating for a standard user
+    # runs with the admin's profile): profile roots, AppData roots and personal folders.
     users = os.path.dirname(norm(os.environ.get("USERPROFILE", r"C:\Users\x")))
     rel = p[len(users) + 1:] if p.startswith(users + "\\") else None
-    if rel is not None and (rel.count("\\") == 0 or re.fullmatch(r"[^\\]+\\appdata(\\(local|roaming|locallow))?", rel)):
+    if rel is not None and (rel.count("\\") == 0 or re.fullmatch(
+            r"[^\\]+\\(appdata(\\(local|roaming|locallow))?|" + _PERSONAL + r")", rel)):
         return True
     return False
+
+
+_PERSONAL = r"(desktop|documents|pictures|videos|music|downloads|saved games|favorites|contacts|onedrive[^\\]*)"
+
+
+def in_personal_folder(path: str) -> bool:
+    """Inside anyone's Desktop, Documents, Pictures, Videos, Music, Downloads, Saved Games or
+    OneDrive, or the current user's known folders wherever they've been redirected."""
+    p = norm(path)
+    users = os.path.dirname(norm(os.environ.get("USERPROFILE", r"C:\Users\x")))
+    if p.startswith(users + "\\") and re.match(r"[^\\]+\\" + _PERSONAL + r"(\\|$)", p[len(users) + 1:]):
+        return True
+    return any(k and (p == k or p.startswith(k + "\\")) for k in (norm(_known_folder(f)) for f in _KNOWN[:6]))
+
+
+def under_program_files(path: str) -> bool:
+    p = norm(path)
+    roots = [os.environ.get(v) for v in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")]
+    roots.append(os.path.join(os.environ.get("LOCALAPPDATA") or "", "Programs"))
+    return any(r and p.startswith(norm(r) + "\\") for r in roots if r)
+
+
+def recycle(path: str) -> None:
+    """Send a file or folder to the Recycle Bin, so a mistake can be undone from the desktop.
+    If something is too big for the bin, Windows asks before deleting it permanently."""
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
+                    ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_ushort), ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
+    FO_DELETE = 3
+    FOF_SILENT, FOF_NOCONFIRMATION, FOF_ALLOWUNDO, FOF_NOERRORUI, FOF_WANTNUKEWARNING = 0x4, 0x10, 0x40, 0x400, 0x4000
+    op = SHFILEOPSTRUCTW(None, FO_DELETE, os.path.abspath(path) + "\0", None,
+                         FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_WANTNUKEWARNING,
+                         False, None, None)
+    rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    if rc != 0 or op.fAnyOperationsAborted or os.path.lexists(path):
+        raise OSError(f"couldn't move {path} to the Recycle Bin (code {rc})")
 
 
 def is_inside_windows(path: str) -> bool:
@@ -235,3 +276,50 @@ def cleanup_base_ok(base: str) -> bool:
         if p == prot and not is_temp:
             return False
     return True
+
+
+# ---------------------------------------------------------------- programs Sleep mode must never touch
+
+_SENSITIVE_WORDS = ("antivirus", "anti-virus", "security", "defender", "firewall", "malware", "endpoint",
+                    "vpn", "audio", "sound", "maxxaudio", "waves", "nahimic", "backup", "bitlocker",
+                    "encrypt", "password", "smartcard", "biometric", "fingerprint", "touchpad", "synaptics")
+
+
+@lru_cache(maxsize=1)
+def security_product_dirs() -> tuple[str, ...]:
+    """Folders of the antivirus / firewall / anti-spyware products Windows Security Center knows."""
+    from . import common
+    dirs = []
+    try:
+        rows = common.powershell_json(
+            "foreach ($c in 'AntiVirusProduct','FirewallProduct','AntiSpywareProduct') {"
+            " Get-CimInstance -Namespace root/SecurityCenter2 -ClassName $c -ErrorAction SilentlyContinue |"
+            " ForEach-Object { [pscustomobject]@{ A = [string]$_.pathToSignedProductExe; B = [string]$_.pathToSignedReportingExe } } }",
+            timeout=60)
+        for r in rows:
+            for k in ("A", "B"):
+                exe = os.path.expandvars(r.get(k) or "")
+                if exe and os.path.isabs(exe):
+                    dirs.append(norm(os.path.dirname(exe)))
+    except Exception:
+        pass
+    return tuple(d for d in dirs if d and not is_protected_dir(d))
+
+
+def is_sensitive_program(name: str, publisher: str, folder: str) -> bool:
+    """Security software, VPNs, audio and input helpers and backup tools stay awake: putting them
+    to sleep can switch off protection or break sound, networking or the touchpad."""
+    text = f"{name} {publisher}".lower()
+    if any(w in text for w in _SENSITIVE_WORDS):
+        return True
+    f = norm(folder) if folder else ""
+    return bool(f) and any(f == d or d.startswith(f + "\\") or f.startswith(d + "\\") for d in security_product_dirs())
+
+
+def is_sensitive_service(name: str, values: dict) -> bool:
+    text = " ".join(str(values.get(k) or "") for k in ("DisplayName", "Group", "ImagePath", "Description")) + " " + name
+    if any(w in text.lower() for w in _SENSITIVE_WORDS):
+        return True
+    deps = values.get("DependOnService") or []
+    deps = [deps] if isinstance(deps, str) else list(deps)
+    return any(str(d).lower() in ("audiosrv", "audioendpointbuilder", "ndisuio", "rasman", "bfe", "mpssvc") for d in deps)
