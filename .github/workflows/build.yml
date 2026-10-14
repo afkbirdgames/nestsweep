@@ -21,7 +21,16 @@ jobs:
       - name: Install pinned build dependencies
         run: python -m pip install -r requirements-build.txt
       - name: Run tests
-        run: python -m unittest discover -s tests -v
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -v 2>&1 | Tee-Object -FilePath test.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            # Surface the failure text as an annotation so it shows on the run page and in the API.
+            $t = (Get-Content test.log -Raw) -replace '%','%25' -replace "`r",'' -replace "`n",'%0A'
+            Write-Output "::error title=Tests failed::$t"
+          }
+          exit $code
       - name: Build
         run: python -m PyInstaller --noconfirm --clean nestsweep.spec
       - name: Checksum
