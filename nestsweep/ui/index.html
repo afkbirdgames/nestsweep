@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nestsweep</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand" id="brand"></div>
+      <nav class="nav" id="nav" aria-label="Sections"></nav>
+      <div class="rail-foot" id="railFoot"></div>
+    </aside>
+    <main class="main">
+      <header class="head" id="head">
+        <div>
+          <h1 id="title"></h1>
+          <p id="subtitle"></p>
+        </div>
+        <div class="actions" id="actions"></div>
+        <div class="progress" id="progress"><i></i></div>
+      </header>
+      <section class="body" id="body" tabindex="-1"></section>
+      <footer class="status-line" id="statusLine"><span class="spin"></span><span id="statusText">Ready</span></footer>
+    </main>
+  </div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script src="icons.js"></script>
+  <script src="app.js"></script>
+  <script>
+    // Browser preview only: index.html?mock loads fake data so the UI can be designed without Windows.
+    if (location.search.includes("mock") && !window.pywebview) {
+      const s = document.createElement("script"); s.src = "dev/mock.js"; document.body.appendChild(s);
+    }
+  </script>
+</body>
+</html>

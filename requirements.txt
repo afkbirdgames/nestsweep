@@ -1,0 +1,9 @@
+# Runtime dependencies (pinned so every build bundles the same code)
+pywebview==5.3.2
+pythonnet==3.2.1
+clr_loader==0.3.1
+bottle==0.13.4
+proxy_tools==0.1.0
+cffi==2.1.1
+pycparser==3.11
+typing_extensions==4.16.0
