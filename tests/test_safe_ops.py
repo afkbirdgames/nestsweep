@@ -53,7 +53,7 @@ class CustomCleanTest(unittest.TestCase):
 
 class StartupManagerTest(unittest.TestCase):
     def setUp(self):
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN, 0, winreg.KEY_SET_VALUE) as k:
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN, 0, winreg.KEY_SET_VALUE) as k:   # may not exist on a fresh account
             winreg.SetValueEx(k, NAME, 0, winreg.REG_SZ, r'"C:\Windows\notepad.exe"')
 
     def tearDown(self):
