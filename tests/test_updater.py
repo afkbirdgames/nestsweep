@@ -85,6 +85,8 @@ class LiveReleaseTest(unittest.TestCase):
         import json
         rel = json.loads(updater._get(updater.LATEST_API, 30, 1_000_000))
         info = updater.release_info(rel, "0.0.1")
+        if not info["exe_url"]:
+            self.skipTest("the latest release's exe is still being built and attached")
         self.assertTrue(info["available"], info)
         sha = updater.expected_sha256(updater._get(info["sum_url"], 30, 10_000).decode())
         data = updater._get(info["exe_url"], 300, updater.MAX_EXE_BYTES)
