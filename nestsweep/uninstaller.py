@@ -10,7 +10,6 @@ anything that also matches another installed program are never offered.
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -85,6 +84,12 @@ def _fmt_date(d) -> str:
     return f"{d[:4]}-{d[4:6]}-{d[6:8]}" if re.fullmatch(r"\d{8}", d) else d
 
 
+def _store_publisher(cert: str) -> str:
+    """Store packages are signed CN=<GUID> by the Store; show that as "Microsoft Store"."""
+    cn = re.sub(r"^CN=([^,]+).*", r"\1", cert)
+    return "Microsoft Store" if re.fullmatch(r"[0-9A-Fa-f-]{36}", cn) else cn
+
+
 def _store_apps() -> list[Software]:
     try:
         rows = common.powershell_json(
@@ -93,7 +98,7 @@ def _store_apps() -> list[Software]:
     except Exception:
         return []
     return [Software("appx:" + r["PackageFullName"], r["Name"], r["Version"],
-                     re.sub(r"^CN=([^,]+).*", r"\1", r.get("Publisher") or ""), r.get("InstallLocation") or "",
+                     _store_publisher(r.get("Publisher") or ""), r.get("InstallLocation") or "",
                      "", 0, "", "", True) for r in rows]
 
 

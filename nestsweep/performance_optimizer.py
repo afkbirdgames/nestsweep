@@ -14,7 +14,6 @@ programs in any order always restores the true original state.
 from __future__ import annotations
 
 import json
-import os
 import winreg
 from dataclasses import dataclass, asdict, field
 
@@ -90,7 +89,7 @@ def scan() -> list[Program]:
         exes: list[str] = []
         score = sum({"service": 3, "registry_run": 2, "autostart": 2, "scheduled_task": 1}[e.entry_type] for e in mine)
         state = "deactivated" if sw.id in sleeping else "ignored" if sw.id in ignored else "found"
-        programs.append(Program(sw.id, sw.name, loc or sw.install_location, state,
+        programs.append(Program(sw.id, sw.name, sw.install_location, state,
                                 "high" if score >= 5 else "medium" if score >= 3 else "low", mine, exes))
     return sorted(programs, key=lambda p: ({"high": 0, "medium": 1, "low": 2}[p.impact], p.name.lower()))
 

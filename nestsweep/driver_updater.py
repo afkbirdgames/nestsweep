@@ -21,12 +21,12 @@ import tempfile
 import time
 import zipfile
 from ctypes import wintypes
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import common, safety, windows_update
 
-BACKUP_DIR = Path(os.environ.get("ProgramData") or r"C:\\ProgramData") / common.APP_NAME / "DriverBackups"
+BACKUP_DIR = Path(os.environ.get("ProgramData") or r"C:\ProgramData") / common.APP_NAME / "DriverBackups"
 
 
 class RestorePointError(RuntimeError):
@@ -66,6 +66,23 @@ def _ensure_backup_dir() -> Path:
             raise OSError("couldn't lock down the driver backup folder: " + (cp.stdout or cp.stderr).strip())
     BACKUP_DIR.mkdir(exist_ok=True)
     return BACKUP_DIR
+
+
+@dataclass
+class Device:
+    id: str                    # PnP device instance id
+    name: str
+    category: str
+    manufacturer: str
+    driver_version: str
+    driver_date: str           # yyyy-MM-dd
+    inf_name: str
+    hardware_ids: list[str]
+    problem_code: int = 0
+    is_microsoft_inbox: bool = False
+    update: dict | None = None     # matching newer Windows Update driver
+    ignored: bool = False
+    backups: list[str] = field(default_factory=list)   # backup file names, oldest first
 
 
 def scan_devices() -> list[Device]:

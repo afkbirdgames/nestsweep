@@ -11,11 +11,9 @@ import functools
 import json
 import os
 import shutil
-import subprocess
 import threading
 import time
 import traceback
-from dataclasses import asdict
 
 from . import __version__, common, custom_clean, driver_updater, performance_optimizer as po, software_updater, \
     startup_manager, uninstaller

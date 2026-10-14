@@ -6,7 +6,6 @@ installed through the Windows Update Agent. Skipped versions and ignored apps ar
 from __future__ import annotations
 
 import re
-import shutil
 from dataclasses import dataclass
 
 from . import common, windows_update

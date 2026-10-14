@@ -21,6 +21,10 @@ jobs:
           python-version: "3.11"
       - name: Install pinned build dependencies
         run: python -m pip install -r requirements-build.txt
+      - name: Lint (undefined names, unused imports)
+        run: |
+          python -m pip install pyflakes==3.2.0
+          python -m pyflakes nestsweep tests run_nestsweep.py
       - name: Run tests
         shell: pwsh
         run: |

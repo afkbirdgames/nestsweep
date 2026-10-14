@@ -25,8 +25,6 @@ import fnmatch
 import glob
 import os
 import re
-import subprocess
-import time
 import winreg
 from ctypes import wintypes
 from dataclasses import dataclass, field
