@@ -342,8 +342,11 @@ class TaskBackupTest(unittest.TestCase):
             self.assertEqual(len(new), 1)
             self.assertIn("cmd.exe", new[0].read_text(encoding="utf-16"))
         finally:
-            common.powershell("Unregister-ScheduledTask -TaskPath '\\' -TaskName $env:NS_NAME -Confirm:$false"
-                              " -ErrorAction SilentlyContinue", args={"name": name})
+            try:          # normally already gone: remove_leftovers removed it
+                common.powershell("Unregister-ScheduledTask -TaskPath '\\' -TaskName $env:NS_NAME -Confirm:$false"
+                                  " -ErrorAction SilentlyContinue", args={"name": name})
+            except RuntimeError:
+                pass
 
 
 if __name__ == "__main__":
