@@ -211,9 +211,12 @@ def find_leftovers(sw: Software, others: list[Software] = ()) -> list[Leftover]:
     cands: dict[str, bool] = {}
     if loc:
         # Only pre-ticked when it's a normal program folder; anywhere else (D:\\Games, Documents\\Tools)
-        # the folder may hold other things, so the user decides.
+        # the folder may hold other things, so the user decides. A folder named after the publisher
+        # rather than the product (C:\\Program Files\\Acme) is often shared with the publisher's
+        # other programs, which may not say where they live (MSI installs), so it isn't pre-ticked either.
         cands[sw.install_location.strip().strip('"').rstrip("\\")] = \
-            safety.under_program_files(loc) and not safety.in_personal_folder(loc)
+            safety.under_program_files(loc) and not safety.in_personal_folder(loc) \
+            and not _maybe_shared(loc, sw, others, tokens)
     for base in (os.environ.get("APPDATA"), os.environ.get("LOCALAPPDATA"), os.environ.get("PROGRAMDATA"),
                  os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)")):
         if not base or not os.path.isdir(base):
@@ -273,6 +276,22 @@ def find_leftovers(sw: Software, others: list[Software] = ()) -> list[Leftover]:
     return out
 
 
+def _maybe_shared(loc: str, sw: Software, others: list[Software], tokens: dict) -> bool:
+    """Could this install folder hold another program too? True when it's named after the publisher
+    and not the product, or when another installed program from the same publisher doesn't say
+    where it lives."""
+    base = os.path.basename(loc).lower()
+    if base in tokens["publisher"] and not _matches(base, tokens["name"]):
+        return True
+    pub = (sw.publisher or "").strip().lower()
+    for o in others:
+        if o.id == sw.id or not pub or (o.publisher or "").strip().lower() != pub:
+            continue
+        if not o.install_location:
+            return True
+    return False
+
+
 def _tokens(sw: Software) -> dict:
     name = re.sub(r"\s*[\d.]+(\s*\(.*\))?$", "", sw.name).strip().lower()
     pub = sw.publisher.lower()
@@ -296,6 +315,12 @@ def _dir_size(p: str) -> int:
     return total
 
 
+def _backup_file(tag: str, ext: str):
+    import uuid
+    safe = re.sub(r"[^\w.-]+", "_", tag)[-60:]
+    return common.BACKUP_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}_{uuid.uuid4().hex[:8]}_{safe}{ext}"
+
+
 def remove_leftovers(leftovers: list[Leftover], progress=None) -> dict:
     stats = {"removed": 0, "errors": []}
     order = {"task": 0, "service": 1, "registry": 2, "shortcut": 3, "folder": 4}
@@ -308,15 +333,24 @@ def remove_leftovers(leftovers: list[Leftover], progress=None) -> dict:
                 safety.check_task_ref(lo.detail["path"], lo.detail["name"])
                 if safety.is_system_task(lo.detail["path"]):
                     raise PermissionError("Windows tasks are never removed")
+                # Export the task's XML first (re-import with schtasks /create /xml); no backup, no delete.
+                dest = _backup_file("leftover_task_" + lo.detail["name"], ".xml")
                 common.powershell("$t = @(Get-ScheduledTask | Where-Object { $_.TaskPath -eq $env:NS_PATH -and"
                                   " $_.TaskName -eq $env:NS_NAME }); if ($t.Count -ne 1) { throw 'task not found' };"
+                                  " $x = Export-ScheduledTask -InputObject $t[0];"
+                                  " if (-not $x) { throw 'could not export the task' };"
+                                  " [IO.File]::WriteAllText($env:NS_DEST, $x, [Text.Encoding]::Unicode);"
                                   " $t[0] | Unregister-ScheduledTask -Confirm:$false",
-                                  args={"path": lo.detail["path"], "name": lo.detail["name"]}, strict=True)
+                                  args={"path": lo.detail["path"], "name": lo.detail["name"], "dest": str(dest)},
+                                  strict=True)
             elif lo.kind == "service":
                 v = {k: val for k, (val, _) in common.reg_values(
                     winreg.HKEY_LOCAL_MACHINE, f"SYSTEM\\CurrentControlSet\\Services\\{lo.target}").items()}
                 if safety.is_critical_service(lo.target, v):
                     raise PermissionError("protected service")
+                if not common.reg_export(f"HKLM\\SYSTEM\\CurrentControlSet\\Services\\{lo.target}",
+                                         "leftover_service_" + lo.target):
+                    raise OSError("couldn't back up the service's settings, so it was left alone")
                 common.run(["sc", "stop", lo.target])
                 cp = common.run(["sc", "delete", lo.target])
                 if cp.returncode:

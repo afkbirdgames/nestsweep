@@ -38,6 +38,7 @@ class Api:
         self._lock = threading.Lock()
         self._update: dict | None = None
         self._update_lock = threading.Lock()
+        self._old_cleaned = False
         self._cache: dict[str, dict] = {"un": {}, "lo": {}, "po": {}, "sm": {}, "su": {}, "du": {}}
         self._counts: dict[str, int | None] = {"startup_enabled": None, "updates": None, "asleep": None, "drivers": None}
 
@@ -59,6 +60,9 @@ class Api:
 
     @_endpoint
     def app_info(self):
+        if not self._old_cleaned:          # the UI loaded and reached Python: this version works
+            self._old_cleaned = True
+            updater.cleanup_old()
         return {"name": "Nestsweep", "version": __version__, "admin": common.is_admin(),
                 "data_dir": str(common.APP_DIR), "backup_dir": str(common.BACKUP_DIR),
                 "frozen": common.FROZEN, "github": GITHUB_URL}

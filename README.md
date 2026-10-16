@@ -45,27 +45,34 @@ installed for all users.
 
 Nestsweep is built to leave something behind rather than delete the wrong thing.
 
-- **Updates are verified.** Only `github.com` release downloads are accepted, the file must match
-  the release's SHA-256, and a signed copy only accepts an update signed by the same publisher.
+- **Updates are verified.** Only this repository's own release downloads are accepted, the file
+  must match the release's SHA-256, and a signed copy only accepts an update signed by the same
+  publisher. The previous version is kept until the new one's window has opened.
 - **Everything is recorded.** Changes go into a journal at `%LOCALAPPDATA%\Nestsweep\state.db`.
-  Registry keys are exported to `%LOCALAPPDATA%\Nestsweep\backups` before they're deleted, and a
-  key that can't be exported is left alone.
+  Registry keys, and the settings of leftover services and scheduled tasks, are exported to
+  `%LOCALAPPDATA%\Nestsweep\backups` before they're deleted, and anything that can't be exported
+  is left alone.
 - **Cleanup**
   - It never follows junctions or symbolic links.
   - It skips a rule if that rule's path uses an environment variable that isn't set.
   - It won't empty drive roots, Windows, Program Files, user profiles, AppData roots or your
     personal folders.
-  - It checks every path again right before deleting it.
+  - It deletes each item through a handle and checks where that handle really points first, so
+    a folder swapped for a junction mid-clean can't redirect a delete (important when running as
+    administrator over shared folders like `C:\Windows\Temp`).
+  - It never empties a profile folder, even one called `TEMP` (Windows' temporary profile).
   - Temp files created or changed in the last 48 hours are left alone, and emptying the Recycle
     Bin is off unless you tick it.
 - **Uninstaller**
   - It only looks for leftovers when the program really is gone. If you cancel the vendor
     uninstaller, nothing is swept.
-  - It ignores install folders that are too broad or shared with another program, anything
-    inside Windows, and Microsoft services and tasks.
+  - It ignores install folders that are relative, on a network share, too broad or shared with
+    another program, anything inside Windows, and Microsoft services and tasks.
   - Only items that clearly belonged to the program come pre-ticked. An install folder is only
     pre-ticked when it's inside Program Files, never in Documents, Desktop or a folder like
-    `D:\Games`, and nothing inside anyone's personal folders is ever pre-ticked.
+    `D:\Games`, and not when it's named after the publisher (`C:\Program Files\Acme`) or another
+    program from the same publisher doesn't say where it lives. Nothing inside anyone's personal
+    folders is ever pre-ticked.
   - Leftover folders and shortcuts go to the **Recycle Bin**, so they can be restored.
 - **Sleep mode and Startup** never touch Microsoft, svchost, Windows-folder or protected
   (anti-malware) services, or tasks under `\Microsoft\`. Security software (anything Windows
@@ -73,6 +80,8 @@ Nestsweep is built to leave something behind rather than delete the wrong thing.
   helpers are never offered for sleep. Startup entries are switched off, never deleted.
 - **Drivers**
   - Only drivers newer than the installed one are offered, and nothing is pre-selected.
+  - A driver is matched to a device by one of that device's exact hardware IDs, and both the
+    device and the driver must be in a class that's allowed below.
   - Drivers for storage controllers, chipset/system devices, firmware, network adapters, USB
     controllers, keyboards and mice are never updated from here, because a bad one can stop
     Windows from starting or leave the PC without input or internet.

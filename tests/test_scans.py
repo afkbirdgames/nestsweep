@@ -43,7 +43,9 @@ class ScanSmokeTest(unittest.TestCase):
 
 class DriverOfferTest(unittest.TestCase):
     def _dev(self, date):
-        return du.Device("PCI\\X\\1", "GPU", "Display", "Vendor", "1.0", date, "oem1.inf", ["PCI\\VEN_1&DEV_2&SUBSYS_3"])
+        # The installed driver's hardware ID first, then every hardware ID Windows lists for the device.
+        return du.Device("PCI\\X\\1", "GPU", "Display", "Vendor", "1.0", date, "oem1.inf",
+                         ["PCI\\VEN_1&DEV_2&SUBSYS_3", "PCI\\VEN_1&DEV_2"])
 
     def test_only_newer_drivers_are_offered(self):
         dev = self._dev("2025-06-01")

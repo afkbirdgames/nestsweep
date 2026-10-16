@@ -10,7 +10,7 @@ Updates are required by default: until the user installs one, the UI refuses to 
 
 A running exe can't be overwritten, but Windows lets it be renamed. So the running copy is
 renamed to Nestsweep.exe.old, the new file takes its place, the new copy is started, and the
-.old file is removed the next time the app starts.
+.old file is removed once the new copy's window has loaded.
 """
 from __future__ import annotations
 
@@ -28,7 +28,9 @@ from . import __version__, common
 
 REPO = "afkbirdgames/nestsweep"
 LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"
-ALLOWED_DOWNLOAD_HOSTS = ("https://github.com/", "https://objects.githubusercontent.com/",
+# Downloads must start at this repo's own release files; GitHub then redirects to its file hosts.
+RELEASE_DOWNLOAD = f"https://github.com/{REPO}/releases/download/"
+ALLOWED_REDIRECT_HOSTS = ("https://github.com/", "https://objects.githubusercontent.com/",
                           "https://release-assets.githubusercontent.com/")
 EXE_ASSET = "Nestsweep.exe"
 SUM_ASSET = "Nestsweep.exe.sha256"
@@ -40,14 +42,19 @@ def parse_version(tag: str) -> tuple[int, ...] | None:
     return tuple(int(x) for x in m.groups()) if m else None
 
 
+def _release_file(url: str | None) -> bool:
+    # GitHub owner/repo names aren't case-sensitive, so neither is this check.
+    return isinstance(url, str) and url.lower().startswith(RELEASE_DOWNLOAD.lower()) and ".." not in url
+
+
 def _get(url: str, timeout: float, limit: int) -> bytes:
-    if not url.startswith(("https://api.github.com/",) + ALLOWED_DOWNLOAD_HOSTS):
+    if url != LATEST_API and not _release_file(url):
         raise ValueError(f"unexpected update URL {url}")
     req = urllib.request.Request(url, headers={"User-Agent": f"Nestsweep/{__version__}",
                                                "Accept": "application/vnd.github+json, application/octet-stream"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         final = r.geturl()
-        if not final.startswith(("https://api.github.com/",) + ALLOWED_DOWNLOAD_HOSTS):
+        if not final.startswith("https://api.github.com/" if url == LATEST_API else ALLOWED_REDIRECT_HOSTS):
             raise ValueError(f"update download was redirected to {final}")
         data = r.read(limit + 1)
     if len(data) > limit:
@@ -59,7 +66,9 @@ def release_info(release: dict, current: str = __version__) -> dict:
     """Turn a GitHub release JSON object into what the UI needs."""
     latest = parse_version(release.get("tag_name", ""))
     cur = parse_version(current)
-    assets = {a.get("name"): a.get("browser_download_url") for a in release.get("assets", [])}
+    # Only this repo's own release files count (a release can't point the updater anywhere else).
+    assets = {a.get("name"): a.get("browser_download_url") for a in release.get("assets", [])
+              if _release_file(a.get("browser_download_url"))}
     notes = release.get("body") or ""
     available = bool(latest and cur and latest > cur and not release.get("draft") and not release.get("prerelease")
                      and assets.get(EXE_ASSET) and assets.get(SUM_ASSET))
@@ -137,7 +146,9 @@ def swap(current_exe: Path, new_exe: Path) -> Path:
 
 
 def cleanup_old() -> None:
-    """Remove the previous copy left by an update (it was still running at the time)."""
+    """Remove the previous copy left by an update (it was still running at the time). Called once
+    the new copy's window has loaded and talked to Python (Api.app_info), so if the new version
+    can't even start, the old one is still there to put back by hand."""
     if not common.FROZEN:
         return
     old = Path(sys.executable).with_name(Path(sys.executable).name + ".old")
@@ -152,7 +163,7 @@ def install(info: dict, progress=None) -> str:
     """Download, verify and swap in the new version. Returns the path to start."""
     if not common.FROZEN:
         raise RuntimeError("Running from source: update with git pull instead.")
-    if not info.get("available") or not info.get("exe_url") or not info.get("sum_url"):
+    if not info.get("available") or not _release_file(info.get("exe_url")) or not _release_file(info.get("sum_url")):
         raise RuntimeError("No update is available.")
     current = Path(sys.executable)
     if progress:

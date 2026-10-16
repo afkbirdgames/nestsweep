@@ -120,17 +120,19 @@ def needs_attention(code: int) -> bool:
 
 def scan_devices() -> list[Device]:
     rows = common.powershell_json(r"""
-$err = @{}; Get-CimInstance Win32_PnPEntity | ForEach-Object { $err[$_.PNPDeviceID] = $_.ConfigManagerErrorCode }
+$err = @{}; $ids = @{}
+Get-CimInstance Win32_PnPEntity | ForEach-Object { $err[$_.PNPDeviceID] = $_.ConfigManagerErrorCode; $ids[$_.PNPDeviceID] = @($_.HardwareID) }
 Get-CimInstance Win32_PnPSignedDriver | Where-Object { $_.DeviceName -and $_.InfName } | ForEach-Object {
   [pscustomobject]@{ Id=$_.DeviceID; Name=$_.DeviceName; Class=[string]$_.DeviceClass; Mfr=[string]$_.Manufacturer
     Provider=[string]$_.DriverProviderName; Version=[string]$_.DriverVersion
     Date= if ($_.DriverDate) { $_.DriverDate.ToString('yyyy-MM-dd') } else { '' }
-    Inf=[string]$_.InfName; HwId=[string]$_.HardWareID; Err=[int]$err[$_.DeviceID] } }""", timeout=300)
+    Inf=[string]$_.InfName; HwId=[string]$_.HardWareID; HwIds=@($ids[$_.DeviceID] | Where-Object { $_ })
+    Err=[int]$err[$_.DeviceID] } }""", timeout=300)
     ignored = set(common.setting_get("du_ignored", []))
     out = []
     for r in rows:
         out.append(Device(r["Id"], r["Name"], r["Class"] or "OTHER", r["Mfr"] or r["Provider"], r["Version"],
-                          r["Date"], r["Inf"], [h for h in [r["HwId"]] if h], r["Err"] or 0,
+                          r["Date"], r["Inf"], _hardware_ids(r), r["Err"] or 0,
                           r["Provider"] == "Microsoft" and not r["Inf"].lower().startswith("oem"),
                           ignored=r["Id"] in ignored))
     return out
@@ -162,9 +164,32 @@ def _is_newer(update_date: str, installed_date: str) -> bool:
     return not installed_date or update_date > installed_date
 
 
+def _hardware_ids(row: dict) -> list[str]:
+    """The installed driver's hardware ID first (restore installs onto it), then every hardware ID
+    Windows lists for the device, most specific first."""
+    more = row.get("HwIds") or []
+    if isinstance(more, dict):              # Windows PowerShell 5.1 sometimes wraps arrays
+        more = more.get("value") or []
+    if isinstance(more, str):
+        more = [more]
+    out = []
+    for h in [row.get("HwId")] + list(more):
+        if isinstance(h, str) and h and h.lower() not in (x.lower() for x in out):
+            out.append(h)
+    return out
+
+
 def _hw_match(wu_id: str, device_ids: list[str]) -> bool:
-    w = wu_id.lower()
-    return any(h.lower() == w or h.lower().startswith(w + "&") for h in device_ids)
+    """Exact match against one of the device's own hardware IDs, the way Windows matches drivers.
+    A prefix match would let a driver for a USB composite parent (USB\\VID_x&PID_y) land on its
+    audio or camera child (USB\\VID_x&PID_y&MI_00), which is a different device class."""
+    w = (wu_id or "").strip().lower()
+    return bool(w) and any(h.lower() == w for h in device_ids)
+
+
+def _offer_ok(update: dict, dev: "Device") -> bool:
+    """Both the device and the driver Windows Update offers must be in a class we update."""
+    return offerable(dev.category) and offerable(update.get("DriverClass") or "")
 
 
 def scan(progress=None) -> list[Device]:
@@ -181,7 +206,7 @@ def scan(progress=None) -> list[Device]:
         hw = u.get("DriverHardwareID") or ""
         date = u.get("DriverVerDate") or ""
         for d in devs:
-            if hw and _hw_match(hw, d.hardware_ids) and _is_newer(date, d.driver_date) and offerable(d.category):
+            if hw and _hw_match(hw, d.hardware_ids) and _is_newer(date, d.driver_date) and _offer_ok(u, d):
                 if not d.update or date > (d.update.get("DriverVerDate") or ""):
                     d.update = u
     try:
@@ -300,7 +325,8 @@ def update(devices: list[Device], restore_point: bool = True, progress=None) -> 
     """Install newer drivers. Returns {"results": [...], "skipped": ["Device: reason", ...]}."""
     if not common.is_admin():
         raise PermissionError("Updating drivers requires administrator rights.")
-    devices = [d for d in devices if d.update and offerable(d.category)
+    devices = [d for d in devices if d.update and _offer_ok(d.update, d)
+               and _hw_match(d.update.get("DriverHardwareID") or "", d.hardware_ids)
                and _is_newer(d.update.get("DriverVerDate") or "", d.driver_date)]
     if not devices:
         return {"results": [], "skipped": []}

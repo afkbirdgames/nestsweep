@@ -16,7 +16,9 @@ Rules live in rules.ini (a winapp2-style format):
 
 Safety: folders are walked without following junctions or symlinks, a rule whose path uses
 an unset environment variable is skipped, recursive rules refuse dangerous base folders (see
-safety.cleanup_base_ok), and every path is re-checked right before it is deleted.
+safety.cleanup_base_ok), and every item is deleted through a handle whose real location is
+checked first (safety.delete_inside) while its rule folder is held open (safety.PinnedFolder), so a
+folder swapped for a junction mid-clean can't redirect it.
 """
 from __future__ import annotations
 
@@ -62,6 +64,7 @@ class Finding:
     target: str
     size: int = 0
     base: str = ""     # the rule folder this file/dir was found under
+    base_id: str = ""  # that folder's real location when it was scanned (safety.folder_id)
 
 
 # ------------------------------------------------------------- variables
@@ -252,6 +255,10 @@ def _scan_file_key(r: Rule, folder: str, masks: list[str], flags: set[str], out:
         if safety.is_drive_root(base) or not _temp_base_ok(folder, base) or \
                 (_broad(masks, flags) and not safety.cleanup_base_ok(base)):
             continue
+        try:
+            base_id = safety.folder_id(base)   # checked again when cleaning (see clean)
+        except OSError:
+            continue
         dirs_seen = []
         for root, dirs, files in safety.walk(base, recurse):
             dirs_seen.append(root)
@@ -264,16 +271,16 @@ def _scan_file_key(r: Rule, folder: str, masks: list[str], flags: set[str], out:
                         st = os.stat(p)
                         if r.min_age_hours and max(st.st_mtime, st.st_ctime) > newest:
                             continue
-                        out.append(Finding(r.id, "file", p, st.st_size, base))
+                        out.append(Finding(r.id, "file", p, st.st_size, base, base_id))
                     except OSError:
                         pass
         if "REMOVESELF" in flags and not safety.is_protected_dir(base):
             # deepest first so empty parents can be removed after their children
             for d in sorted(dirs_seen, key=len, reverse=True):
-                out.append(Finding(r.id, "dir", d, 0, base))
+                out.append(Finding(r.id, "dir", d, 0, base, base_id))
         elif recurse:
             for d in sorted(dirs_seen[1:], key=len, reverse=True):
-                out.append(Finding(r.id, "dir", d, 0, base))
+                out.append(Finding(r.id, "dir", d, 0, base, base_id))
 
 
 def _scan_reg_key(r: Rule, key: str, value: str | None, out: list[Finding]) -> None:
@@ -345,14 +352,19 @@ def _run_action(action: str) -> None:
     elif name == "RemoveEmptyDirectories":
         for root_dir in arg.split("|"):
             top = expand(root_dir)
-            if not top or not safety.cleanup_base_ok(top):
+            if not top or not safety.cleanup_base_ok(top) or safety.is_reparse(top):
                 continue
-            for d, _, _ in sorted(safety.walk(top), key=lambda t: len(t[0]), reverse=True):
-                if d != top:
-                    try:
-                        os.rmdir(d)          # only succeeds when empty
-                    except OSError:
-                        pass
+            try:
+                pin = safety.PinnedFolder(top, safety.folder_id(top))
+            except OSError:
+                continue
+            with pin:
+                for d, _, _ in sorted(safety.walk(top), key=lambda t: len(t[0]), reverse=True):
+                    if d != top:
+                        try:
+                            safety.delete_inside(d, pin.id, is_dir=True)   # only succeeds when empty
+                        except OSError:
+                            pass
     else:
         raise NotImplementedError(name)
 
@@ -363,41 +375,85 @@ def clean(findings: list[Finding], progress=None) -> dict:
     for key in {f.target.split("|")[0] for f in findings if f.kind == "reg"}:
         if common.reg_export(key, "cleanup_" + key):
             backed_up.add(key)
-    for i, f in enumerate(findings):
-        if progress and i % 50 == 0:
-            progress(i, len(findings), f.target)
-        if f.kind in ("file", "dir") and not _still_safe(f):
-            stats["errors"] += 1
-            continue
-        if f.kind == "reg" and f.target.split("|")[0] not in backed_up:
-            stats["errors"] += 1          # never delete a key we couldn't back up
-            continue
-        try:
-            if f.kind == "file":
-                os.remove(f.target)
-                stats["files"] += 1
-                stats["bytes"] += f.size
-            elif f.kind == "dir":
-                os.rmdir(f.target)          # only removes if now empty
-            elif f.kind == "reg":
-                key, _, value = f.target.partition("|")
-                root, sub = common.split_key(key)
-                if value:
-                    with winreg.OpenKey(root, sub, 0, winreg.KEY_SET_VALUE) as k:
-                        winreg.DeleteValue(k, value)
-                else:
-                    common.reg_delete_tree(root, sub)
-            elif f.kind == "action":
-                _run_action(f.target)
-                stats["bytes"] += f.size
-        except PermissionError:
-            stats["skipped_in_use"] += 1
-        except OSError:
-            stats["errors"] += 1
-        except NotImplementedError:
-            stats["errors"] += 1
+    pins = _Pins()                    # the rule folder being cleaned is held open meanwhile
+    try:
+        for i, f in enumerate(findings):
+            if progress and i % 50 == 0:
+                progress(i, len(findings), f.target)
+            try:
+                if f.kind in ("file", "dir"):
+                    _delete_item(f, pins, stats)
+                elif f.kind == "reg":
+                    if f.target.split("|")[0] not in backed_up:
+                        stats["errors"] += 1          # never delete a key we couldn't back up
+                        continue
+                    key, _, value = f.target.partition("|")
+                    root, sub = common.split_key(key)
+                    if value:
+                        with winreg.OpenKey(root, sub, 0, winreg.KEY_SET_VALUE) as k:
+                            winreg.DeleteValue(k, value)
+                    else:
+                        common.reg_delete_tree(root, sub)
+                elif f.kind == "action":
+                    pins.release()            # our hold on a folder mustn't block the action
+                    _run_action(f.target)
+                    stats["bytes"] += f.size
+            except PermissionError:
+                stats["skipped_in_use"] += 1
+            except OSError:
+                stats["errors"] += 1
+            except NotImplementedError:
+                stats["errors"] += 1
+    finally:
+        pins.release()
     common.journal_add("custom_clean", "run", "clean", stats)
     return stats
+
+
+class _Pins:
+    """Holds one rule folder open at a time (findings come grouped by folder), and remembers
+    folders that couldn't be pinned so nothing in them is tried again."""
+    def __init__(self):
+        self.id, self.pin, self.failed = None, None, set()
+
+    def hold(self, path: str, base_id: str) -> None:
+        if base_id in self.failed:
+            raise OSError(f"{path} isn't the folder that was scanned, so nothing in it was deleted")
+        if self.id == base_id:
+            return
+        self.release()
+        try:
+            self.pin = safety.PinnedFolder(path, base_id)
+        except PermissionError:
+            # Another program has the folder open in a way that stops us holding it. Carry on
+            # without the hold: every item is still checked against the scanned location.
+            self.pin = None
+        except OSError:
+            self.failed.add(base_id)
+            raise
+        self.id = base_id
+
+    def release(self) -> None:
+        if self.pin:
+            self.pin.close()
+        self.id, self.pin = None, None
+
+
+def _delete_item(f: Finding, pins: _Pins, stats: dict) -> None:
+    """Delete one scanned file or folder through safety.delete_inside, with its rule folder pinned
+    (checked to be the folder that was scanned, then held open so it can't be swapped)."""
+    if not _still_safe(f) or not f.base_id:
+        raise OSError(f"{f.target} failed the safety re-check")
+    is_dir = f.kind == "dir"
+    if is_dir and safety.norm(f.target) == safety.norm(f.base):
+        pins.release()                        # REMOVESELF: the rule folder itself; let go of it first
+        safety.delete_inside(f.target, f.base_id, is_dir=True, may_be_base=True)
+        return
+    pins.hold(f.base, f.base_id)
+    safety.delete_inside(f.target, f.base_id, is_dir=is_dir)
+    if not is_dir:
+        stats["files"] += 1
+        stats["bytes"] += f.size
 
 
 def _still_safe(f: Finding) -> bool:
