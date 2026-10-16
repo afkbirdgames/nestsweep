@@ -84,7 +84,7 @@ def walk(top: str, recurse: bool = True):
 class _Win32:
     """The kernel32 calls the handle-based delete needs, on a private kernel32 instance so the
     argtypes set here can't clash with other ctypes users. Tests swap in a fake (see _win32)."""
-    DELETE, FILE_READ_ATTRIBUTES = 0x00010000, 0x80
+    DELETE, FILE_READ_ATTRIBUTES, FILE_LIST_DIRECTORY = 0x00010000, 0x80, 0x1
     SHARE_READ, SHARE_WRITE, SHARE_DELETE = 0x1, 0x2, 0x4
     OPEN_EXISTING = 3
     OPEN_REPARSE_POINT, BACKUP_SEMANTICS = 0x00200000, 0x02000000
@@ -129,9 +129,10 @@ class _Win32:
 
     def open_folder(self, path: str):
         """A rule folder, held open without delete sharing: while the handle is open nobody can
-        rename, delete or replace that folder itself."""
-        return self._open(path, self.FILE_READ_ATTRIBUTES, self.SHARE_READ | self.SHARE_WRITE,
-                          self.BACKUP_SEMANTICS)
+        rename, delete or replace that folder itself. It asks for list access too, because Windows
+        skips the sharing check entirely for a handle that only reads attributes."""
+        return self._open(path, self.FILE_LIST_DIRECTORY | self.FILE_READ_ATTRIBUTES,
+                          self.SHARE_READ | self.SHARE_WRITE, self.BACKUP_SEMANTICS)
 
     def attributes(self, h) -> int:
         class FILE_BASIC_INFO(ctypes.Structure):
